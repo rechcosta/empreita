@@ -132,10 +132,9 @@ export default function OrcamentoFormPage({ mode, id }: Props) {
         return `Informe a descrição do serviço #${i + 1} da mão de obra.`
       }
     }
-    const hasFixed = formLabor.items.some((i) => i.type === 'fixo')
-    if (hasFixed && formLabor.fixedGroupValue.trim() === '') {
-      return 'Informe o valor total da mão de obra (preço fixo).'
-    }
+    // Note: fixedGroupValue is now optional. If the user adds fixed items
+    // without a shared value nor any individual itemValue, the global check
+    // below (grandTotal === 0) will surface the problem.
     return null
   }
 

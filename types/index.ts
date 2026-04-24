@@ -12,10 +12,21 @@ export interface Material {
   total: number | null
 }
 
-/** Item de preço fixo: apenas descrição, sem valor individual (compartilham labor.fixedGroupValue). */
+/**
+ * Item de preço fixo: descrição obrigatória + valor individual opcional.
+ *
+ * - Sem `itemValue` (null/undefined): item é coberto apenas pelo valor
+ *   compartilhado do grupo (`labor.fixedGroupValue`).
+ * - Com `itemValue`: o valor soma ao valor compartilhado no total do grupo
+ *   de preço fixo.
+ *
+ * Zero é um valor válido (item listado sem custo específico) e distinto de
+ * null (valor não informado).
+ */
 export interface LaborFixedItem {
   type: 'fixo'
   description: string
+  itemValue?: number | null
 }
 
 /** Item por unidade: descrição + quantidade × valor unitário. */
@@ -41,11 +52,19 @@ export type LaborItem = LaborFixedItem | LaborUnitItem | LaborSqmItem
 export interface Labor {
   items: LaborItem[]
   /**
-   * Valor único que cobre TODOS os itens de preço fixo.
-   * null quando não há nenhum item do tipo "fixo" na lista.
+   * Valor compartilhado entre os itens de preço fixo. Opcional:
+   * - null quando não há nenhum item do tipo "fixo" na lista;
+   * - também pode ser null (ou zero) quando todos os itens fixos usam apenas
+   *   seus valores individuais (`itemValue`).
    */
   fixedGroupValue: number | null
-  /** Sum: (fixedGroupValue ?? 0) + sum(por_unidade subtotals) + sum(por_m2 subtotals). */
+  /**
+   * Fórmula canônica:
+   *   total = (fixedGroupValue ?? 0)
+   *         + Σ (itemValue dos itens fixos)
+   *         + Σ (subtotal dos itens por_unidade)
+   *         + Σ (subtotal dos itens por_m2)
+   */
   total: number
 }
 
@@ -69,4 +88,4 @@ export interface CompanyInfo {
   cnpj: string
   logoBase64?: string
   email: string
-}   
+}

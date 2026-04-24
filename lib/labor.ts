@@ -1,8 +1,19 @@
-import { Labor, LaborItem, LaborUnitItem, LaborSqmItem } from '@/types'
+import { Labor, LaborItem, LaborFixedItem, LaborUnitItem, LaborSqmItem } from '@/types'
 
 /** Returns true when there is at least one item of type "fixo" in the list. */
 export function hasFixedItems(items: LaborItem[]): boolean {
   return items.some((i) => i.type === 'fixo')
+}
+
+/**
+ * Sums the individual `itemValue` of fixed items. Items without `itemValue`
+ * (null/undefined) contribute zero — they are covered only by the group's
+ * shared value (`fixedGroupValue`).
+ */
+export function sumFixedItemValues(items: LaborItem[]): number {
+  return items
+    .filter((i): i is LaborFixedItem => i.type === 'fixo')
+    .reduce((s, i) => s + (i.itemValue ?? 0), 0)
 }
 
 /** Sums "por_unidade" items' subtotals. */
@@ -21,13 +32,23 @@ export function sumSqmItems(items: LaborItem[]): number {
 
 /**
  * Canonical labor total formula:
- *   total = (fixedGroupValue ?? 0) + sum(por_unidade) + sum(por_m2)
- * Fixed items share a single value (`fixedGroupValue`), which is null
- * when there are no fixed items in the list.
+ *   total = (fixedGroupValue ?? 0)
+ *         + Σ (itemValue of fixed items)
+ *         + Σ (subtotal of por_unidade items)
+ *         + Σ (subtotal of por_m2 items)
+ *
+ * Fixed items share a base (`fixedGroupValue`) and may optionally declare
+ * their own `itemValue`, which is added on top of the shared base. Either
+ * source can be null/empty; the group total is the sum of both.
  */
 export function computeLaborTotal(labor: Labor): number {
-  const fixed = labor.fixedGroupValue ?? 0
-  return round2(fixed + sumUnitItems(labor.items) + sumSqmItems(labor.items))
+  const fixedGroup = labor.fixedGroupValue ?? 0
+  return round2(
+    fixedGroup
+      + sumFixedItemValues(labor.items)
+      + sumUnitItems(labor.items)
+      + sumSqmItems(labor.items)
+  )
 }
 
 /** Subtotal calculations per item type. */

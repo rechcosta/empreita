@@ -34,7 +34,7 @@ A plataforma permite:
 
 - **Cadastrar a empresa prestadora** com logo, CNPJ e dados fiscais
 - **Compor orçamentos** combinando materiais e mão de obra no mesmo documento
-- **Misturar três tipos de mão de obra** no mesmo orçamento — preço fixo (lista de serviços com valor único), por unidade (cálculo por quantidade) e por m² (cálculo por área)
+- **Misturar três tipos de mão de obra** no mesmo orçamento — preço fixo (lista de serviços combinados), por unidade (cálculo por quantidade) e por m² (cálculo por área)
 - **Deixar materiais sem preço** quando o valor ainda não foi cotado, mantendo o item no orçamento sem afetar o subtotal
 - **Gerar PDF profissional** com identidade visual da empresa, pronto para envio ao cliente
 - **Listar e editar orçamentos anteriores** em dashboard privado por conta
@@ -254,12 +254,12 @@ Material {
 
 Labor {
   items: LaborItem[]
-  fixedGroupValue: number | null // único valor que cobre TODOS os itens "fixo"
-  total: number                  // (fixedGroupValue ?? 0) + sum(por_unidade) + sum(por_m2)
+  fixedGroupValue: number | null // valor compartilhado do grupo de preço fixo (opcional)
+  total: number                  // (fixedGroupValue ?? 0) + Σ(itemValue dos fixos) + sum(por_unidade) + sum(por_m2)
 }
 
 LaborItem =
-  | { type: 'fixo', description }
+  | { type: 'fixo', description, itemValue? }    // itemValue é opcional
   | { type: 'por_unidade', description, quantity, unitPrice, subtotal }
   | { type: 'por_m2', description, area, pricePerMeter, subtotal }
 ```
@@ -292,9 +292,9 @@ Algumas regras valem destaque porque não são óbvias:
 
 - **Materiais são opcionais.** Um orçamento pode ser só de mão de obra.
 - **Preço de material é opcional.** Um material sem preço aparece no PDF com "—" e **não entra no subtotal**. `R$ 0,00` é preço válido (material doado), diferente de "preço não informado".
-- **Os 3 tipos de mão de obra podem coexistir no mesmo orçamento.** Preço fixo (lista de serviços com valor único compartilhado), por unidade (qtd × valor) e por m² (área × valor/m²) se somam no total final.
+- **Os 3 tipos de mão de obra podem coexistir no mesmo orçamento.** Preço fixo (serviços combinados), por unidade (qtd × valor) e por m² (área × valor/m²) se somam no total final.
+- **Preço fixo tem duas fontes de valor.** Há um valor compartilhado do grupo (`fixedGroupValue`) que se aplica a todos os itens fixos do orçamento, e cada item fixo pode opcionalmente ter um `itemValue` individual. Ambos são opcionais. O subtotal do grupo é a soma dos dois: `(fixedGroupValue ?? 0) + Σ(itemValue)`. Se todos os itens fixos forem removidos, o `fixedGroupValue` é zerado automaticamente.
 - **Totais são recalculados no servidor.** O cliente envia os números, mas a API sempre recomputa `materialsTotal`, `labor.total` e `grandTotal` antes de persistir. Protege contra dados adulterados.
-- **O `fixedGroupValue` é compartilhado.** Se o orçamento tem 5 itens "preço fixo", todos compartilham um único valor. Remover o último item fixo zera o campo automaticamente.
 
 Justificativa e alternativas consideradas em [`ARCHITECTURE.md`](./ARCHITECTURE.md#decisões-de-domínio).
 
@@ -308,12 +308,19 @@ Fluxo mínimo que cobre as regras principais:
 2. Criar orçamento com:
    - Cliente com endereço longo (para validar quebra de linha no PDF)
    - 1 material com preço, 1 material sem preço
-   - 2 itens de mão de obra "preço fixo" com valor compartilhado
+   - 2 itens de mão de obra "preço fixo" — um sem `itemValue` (coberto só pelo grupo), outro com `itemValue` informado
    - 1 item "por unidade"
    - 1 item "por m²"
-3. Verificar no dashboard: total bate com a soma
-4. Gerar PDF: materiais sem preço aparecem com "—"; os 3 grupos de mão de obra aparecem separados; total geral correto
-5. Editar orçamento, remover item fixo, salvar: `fixedGroupValue` é zerado se não sobrar nenhum item "fixo"
+   - `fixedGroupValue` com algum valor
+3. Verificar no dashboard: total bate com a soma `materiais + grupo fixo + soma dos itemValues + por_unidade + por_m2`
+4. Gerar PDF:
+   - Materiais sem preço aparecem com "—"
+   - Item fixo sem `itemValue` mostra "—" na coluna direita
+   - Item fixo com `itemValue` mostra o valor
+   - Linha "Valor compartilhado do grupo" aparece quando `fixedGroupValue > 0`
+   - Subtotal preço fixo = grupo + individuais
+   - Total geral correto
+5. Editar orçamento, remover todos os itens fixos, salvar: `fixedGroupValue` é zerado automaticamente
 
 ---
 
@@ -327,6 +334,6 @@ Este repositório está disponível para **leitura, avaliação acadêmica e por
 
 ## Autor
 
-Gustavo Rech Costa 
+Gustavo Rech Costa
 
 Projeto desenvolvido como solução para pequenas empresas do setor de construção civil.

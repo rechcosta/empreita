@@ -76,6 +76,7 @@ O cálculo do total da mão de obra é referenciado em três lugares: preview no
 // lib/labor.ts
 export function computeLaborTotal(labor: Labor): number {
   return (labor.fixedGroupValue ?? 0)
+       + sumFixedItemValues(labor.items)
        + sumUnitItems(labor.items)
        + sumSqmItems(labor.items)
 }
@@ -150,12 +151,14 @@ Três tipos de item de mão de obra, identificados pelo campo `type`:
 
 ```typescript
 type LaborItem =
-  | { type: 'fixo'; description: string }
+  | { type: 'fixo'; description: string; itemValue?: number | null }
   | { type: 'por_unidade'; description: string; quantity: number; unitPrice: number; subtotal: number }
   | { type: 'por_m2'; description: string; area: number; pricePerMeter: number; subtotal: number }
 ```
 
 No Mongoose, isso é modelado como schema único com todos os campos opcionais. A união de TypeScript garante correção no código; o Mongo só armazena o que cada item precisa.
+
+O `itemValue` em itens fixos é opcional (`null` = não informado). Ver [decisões de domínio](#decisões-de-domínio) para a semântica completa.
 
 ---
 
@@ -315,13 +318,24 @@ Alternativa rejeitada: `unitPrice: number` com flag `hasPricing: boolean`. Dois 
 
 Zero é preço válido (material doado) e **entra no subtotal**. `null` é "não informado" e **não entra**. Semântica diferente.
 
-### Valor único compartilhado de preço fixo
+### Preço fixo: grupo compartilhado + valores individuais opcionais
 
-O spec é explícito: "Itens NÃO possuem valor individual. Um único campo ao final da lista: 'Valor total da mão de obra'."
+Itens de preço fixo têm duas fontes de valor que **somam** para formar o subtotal do grupo:
 
-Modelagem: `labor.fixedGroupValue: number | null`. Se não há nenhum item do tipo `fixo` na lista, o campo é `null`. Remover o último item fixo reseta o campo automaticamente.
+1. **`labor.fixedGroupValue`** — um único valor que se aplica a todos os itens fixos do grupo como um custo combinado.
+2. **`LaborFixedItem.itemValue`** — valor individual opcional, por item.
 
-**Alternativa rejeitada:** cada item fixo ter seu próprio `unitPrice`. Teria sido mais simétrico com os outros tipos, mas **contraria o spec diretamente**. Leitor com atenção vai pegar.
+Fórmula canônica:
+
+```
+total_preço_fixo = (fixedGroupValue ?? 0) + Σ (itemValue dos itens fixos)
+```
+
+Ambas as fontes são opcionais (`null`/vazio). Um grupo pode usar só a compartilhada, só as individuais, ambas, ou nenhuma (neste último caso, a validação global `grandTotal > 0` impede o orçamento de ser salvo sem algum valor em algum lugar).
+
+**Histórico desta decisão.** A modelagem original tinha apenas `fixedGroupValue` — itens fixos não podiam ter valor individual. A restrição foi relaxada em favor do modelo atual.
+
+**Custo assumido explicitamente.** O modelo atual permite expressar a mesma realidade de duas formas diferentes: um item `fixo` com `itemValue` preenchido é funcionalmente igual a um item `por_unidade` com `quantity = 1`. Isso é débito conhecido. Relatórios futuros que agrupem por tipo vão tratar essas entradas como categorias distintas mesmo quando o conteúdo econômico é o mesmo. Se um dia aparecer necessidade de normalizar (BI, export para contabilidade, etc.), será preciso decidir uma forma canônica.
 
 ### Os 3 tipos de mão de obra podem ser misturados
 
@@ -329,18 +343,18 @@ A union discriminada no TypeScript + schema unificado no Mongoose permite arrays
 
 ```typescript
 labor.items = [
-  { type: 'fixo', description: 'Retirar piso' },
-  { type: 'fixo', description: 'Derrubar parede' },
+  { type: 'fixo', description: 'Retirar piso' },                              // coberto só pelo grupo
+  { type: 'fixo', description: 'Derrubar parede', itemValue: 800 },           // grupo + individual
   { type: 'por_m2', description: 'Pintura', area: 30, pricePerMeter: 25, subtotal: 750 },
   { type: 'por_unidade', description: 'Trocar tomadas', quantity: 5, unitPrice: 40, subtotal: 200 }
 ]
 labor.fixedGroupValue = 3000
-labor.total = 3000 + 200 + 750 = 3950
+labor.total = 3000 + 800 + 750 + 200 = 4750
 ```
 
 ### Materiais são opcionais
 
-Um orçamento válido pode ter apenas mão de obra. A única regra dura é que **algum valor tem que existir** — não faz sentido um orçamento com `grandTotal === 0` (exceto pro spec que não permitiu explicitamente esse zero).
+Um orçamento válido pode ter apenas mão de obra. A única regra dura é que **algum valor tem que existir** — não faz sentido um orçamento com `grandTotal === 0`.
 
 ---
 

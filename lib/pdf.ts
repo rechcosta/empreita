@@ -4,7 +4,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Orcamento, CompanyInfo, LaborItem } from '@/types'
 import { formatCurrency, formatCurrencyOrDash } from './utils'
-import { sumUnitItems, sumSqmItems } from './labor'
+import { sumFixedItemValues, sumUnitItems, sumSqmItems } from './labor'
 
 export function generateOrcamentoPDF(
   orcamento: Orcamento,
@@ -216,7 +216,9 @@ export function generateOrcamentoPDF(
   sectionLabel('Mão de obra', ML, cursorY)
   cursorY += 3
 
-  const fixedItems = orcamento.labor.items.filter((i) => i.type === 'fixo')
+  const fixedItems = orcamento.labor.items.filter(
+    (i): i is Extract<LaborItem, { type: 'fixo' }> => i.type === 'fixo'
+  )
   const unitItems  = orcamento.labor.items.filter(
     (i): i is Extract<LaborItem, { type: 'por_unidade' }> => i.type === 'por_unidade'
   )
@@ -263,16 +265,59 @@ export function generateOrcamentoPDF(
 
   // ─ Group 1: Preço fixo ─
   if (fixedItems.length > 0) {
-    cursorY = laborGroupHeader('Preço fixo', cursorY)
+    const fixedGroup = orcamento.labor.fixedGroupValue ?? 0
+    const fixedItemsSum = sumFixedItemValues(orcamento.labor.items)
+    const fixedSubtotal = fixedGroup + fixedItemsSum
 
-    const fixedValue = orcamento.labor.fixedGroupValue ?? 0
-    const body: any[] = fixedItems.map((it) => [
-      { content: `  ${it.description}`, styles: { textColor: inkMid as any } },
-      '',
-    ])
+    // Subtitle communicates the dual-source pricing for this group
+    const subtitle =
+      fixedGroup > 0 && fixedItemsSum > 0
+        ? 'Valor compartilhado + individuais'
+        : fixedGroup > 0
+          ? 'Valor compartilhado do grupo'
+          : 'Valores individuais'
+
+    cursorY = laborGroupHeader('Preço fixo', cursorY, subtitle)
+
+    // Each row: description + individual value (or "—" when not informed)
+    const body: any[] = fixedItems.map((it) => {
+      const hasIndividual = it.itemValue !== null && it.itemValue !== undefined
+      return [
+        { content: `  ${it.description}`, styles: { textColor: inkMid as any } },
+        {
+          content: formatCurrencyOrDash(it.itemValue ?? null),
+          styles: {
+            halign: 'right',
+            textColor: (hasIndividual ? inkMid : inkMuted) as any,
+          },
+        },
+      ]
+    })
+
+    // Shared group value — only when actually informed (> 0)
+    if (fixedGroup > 0) {
+      body.push([
+        {
+          content: '  Valor compartilhado do grupo',
+          styles: { fontStyle: 'italic', textColor: inkMid as any },
+        },
+        {
+          content: formatCurrency(fixedGroup),
+          styles: { halign: 'right', fontStyle: 'italic', textColor: inkMid as any },
+        },
+      ])
+    }
+
+    // Group subtotal
     body.push([
-      { content: '  Valor total do grupo', styles: { fontStyle: 'bold', textColor: inkDark as any } },
-      { content: formatCurrency(fixedValue), styles: { fontStyle: 'bold', halign: 'right', textColor: inkDark as any } },
+      {
+        content: '  Subtotal preço fixo',
+        styles: { fontStyle: 'bold', textColor: inkDark as any },
+      },
+      {
+        content: formatCurrency(fixedSubtotal),
+        styles: { fontStyle: 'bold', halign: 'right', textColor: inkDark as any },
+      },
     ])
 
     autoTable(doc, {
@@ -412,23 +457,13 @@ export function generateOrcamentoPDF(
   cursorY += totalBoxH + 8
 
   // ═══════════ SIGNATURE AREA — anchored to bottom ═════════════
-  //
-  // The signature is ALWAYS placed above the footer with guaranteed clearance,
-  // regardless of content length. If content pushed us past the reserved area,
-  // we add a new page first.
 
-  // Space required: signature (20mm) + gap (4mm) + footer (12mm) = 36mm from bottom
-  // Signature top anchor: pageHeight - FOOTER_HEIGHT - SIGNATURE_TO_FOOTER - SIGNATURE_HEIGHT
-  // = pageHeight - 12 - 4 - 20 = pageHeight - 36
-
-  // If content went further than that, start a new page for signature + footer
   if (cursorY > pageHeight - MIN_BOTTOM_SPACE) {
     doc.addPage()
     cursorY = 20
   }
 
   const signatureTop = pageHeight - FOOTER_HEIGHT - SIGNATURE_TO_FOOTER - SIGNATURE_HEIGHT
-  // Line sits visually in the middle of the reserved signature band
   const sigLineY = signatureTop + 10
   const colGap = 18
   const sigColW = (innerWidth - colGap) / 2
@@ -445,10 +480,6 @@ export function generateOrcamentoPDF(
   doc.text('Empresa', ML + sigColW + colGap + sigColW / 2, sigLineY + 4, { align: 'center' })
 
   // ═══════════ FOOTER on EVERY page ════════════════════════════
-  //
-  // Important: apply the footer to all pages (including any new ones created
-  // above). We draw footer once per page at the very end, so if a page break
-  // happened mid-content, the footer is still present there.
 
   const pageCount = doc.getNumberOfPages()
   for (let i = 1; i <= pageCount; i++) {
@@ -468,7 +499,6 @@ export function generateOrcamentoPDF(
       { align: 'center' }
     )
 
-    // Page number only shown when there is more than one page
     if (pageCount > 1) {
       doc.text(
         `${i} / ${pageCount}`,

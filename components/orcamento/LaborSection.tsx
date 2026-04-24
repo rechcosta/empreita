@@ -8,6 +8,7 @@ import {
   computeUnitSubtotal,
   computeSqmSubtotal,
   hasFixedItems,
+  sumFixedItemValues,
   sumUnitItems,
   sumSqmItems,
 } from '@/lib/labor'
@@ -21,6 +22,8 @@ export interface FormLaborItem {
   // Shared
   type: LaborItemType
   description: string
+  // fixo (optional — empty string means "not informed")
+  itemValue?: string
   // por_unidade
   quantity?: string
   unitPrice?: string
@@ -31,7 +34,8 @@ export interface FormLaborItem {
 
 export interface FormLaborState {
   items: FormLaborItem[]
-  fixedGroupValue: string // single value for all fixed items
+  /** Optional shared value for all fixed items. Empty string = not informed. */
+  fixedGroupValue: string
 }
 
 interface Props {
@@ -45,11 +49,23 @@ function parseNum(s: string | undefined): number {
   return parseFloat(s ?? '0') || 0
 }
 
+/** Parses an optional numeric string: empty → null, otherwise a number. */
+function parseOptionalNum(s: string | undefined): number | null {
+  const raw = (s ?? '').trim()
+  if (raw === '') return null
+  const n = parseFloat(raw)
+  return Number.isFinite(n) ? n : null
+}
+
 /** Converts the form state into a canonical Labor object (for saving). */
 export function buildLaborPayload(form: FormLaborState): Labor {
   const items: LaborItem[] = form.items.map((item) => {
     if (item.type === 'fixo') {
-      return { type: 'fixo', description: item.description.trim() }
+      return {
+        type: 'fixo',
+        description: item.description.trim(),
+        itemValue: parseOptionalNum(item.itemValue),
+      }
     }
     if (item.type === 'por_unidade') {
       const quantity = parseNum(item.quantity)
@@ -74,7 +90,7 @@ export function buildLaborPayload(form: FormLaborState): Labor {
   })
 
   const fixedPresent = items.some((i) => i.type === 'fixo')
-  const fixedGroupValue = fixedPresent ? parseNum(form.fixedGroupValue) : null
+  const fixedGroupValue = fixedPresent ? parseOptionalNum(form.fixedGroupValue) : null
 
   const labor: Labor = { items, fixedGroupValue, total: 0 }
   labor.total = computeLaborTotal(labor)
@@ -89,7 +105,16 @@ export function emptyLaborState(): FormLaborState {
 export function laborToFormState(labor: Labor): FormLaborState {
   return {
     items: labor.items.map((i) => {
-      if (i.type === 'fixo') return { type: 'fixo', description: i.description }
+      if (i.type === 'fixo') {
+        return {
+          type: 'fixo',
+          description: i.description,
+          itemValue:
+            i.itemValue === null || i.itemValue === undefined
+              ? ''
+              : i.itemValue.toString(),
+        }
+      }
       if (i.type === 'por_unidade') return {
         type: 'por_unidade',
         description: i.description,
@@ -116,13 +141,17 @@ export default function LaborSection({ value, onChange }: Props) {
   // Derived preview totals (UI-only; real saving rebuilds via buildLaborPayload)
   const previewLabor = useMemo(() => buildLaborPayload(value), [value])
   const fixedPresent = useMemo(() => hasFixedItems(previewLabor.items), [previewLabor])
+  const fixedItemsSum = useMemo(() => sumFixedItemValues(previewLabor.items), [previewLabor])
   const unitSum = useMemo(() => sumUnitItems(previewLabor.items), [previewLabor])
   const sqmSum = useMemo(() => sumSqmItems(previewLabor.items), [previewLabor])
-  const fixedValue = previewLabor.fixedGroupValue ?? 0
+  const fixedGroup = previewLabor.fixedGroupValue ?? 0
+  const fixedTotal = fixedGroup + fixedItemsSum
 
   function addItem(type: LaborItemType) {
     const base: FormLaborItem = { type, description: '' }
-    if (type === 'por_unidade') {
+    if (type === 'fixo') {
+      base.itemValue = ''
+    } else if (type === 'por_unidade') {
       base.quantity = ''
       base.unitPrice = ''
     } else if (type === 'por_m2') {
@@ -154,8 +183,8 @@ export default function LaborSection({ value, onChange }: Props) {
       <div className="flex items-start justify-between mb-4 gap-4">
         <h2 className="section-title mb-0">4. Mão de obra</h2>
         <p className="text-xs text-gray-500 max-w-xs text-right">
-          Adicione serviços combinando tipos. Itens de preço fixo
-          compartilham um único valor total.
+          Adicione serviços combinando tipos. Itens de preço fixo compartilham
+          um valor comum e podem também ter valor individual opcional.
         </p>
       </div>
 
@@ -188,10 +217,12 @@ export default function LaborSection({ value, onChange }: Props) {
           {fixedPresent && (
             <div className="mt-5 rounded-lg border-2 border-brand-200 bg-brand-50 p-4">
               <label className="block text-sm font-semibold text-gray-900 mb-1">
-                Valor total da mão de obra (preço fixo) *
+                Valor compartilhado do grupo (preço fixo){' '}
+                <span className="text-gray-500 font-normal">— opcional</span>
               </label>
               <p className="text-xs text-gray-600 mb-3">
-                Este valor cobre todos os serviços de preço fixo listados acima.
+                Soma a todos os itens de preço fixo. Deixe vazio se cada item
+                já tem seu valor individual informado.
               </p>
               <input
                 type="number"
@@ -213,8 +244,8 @@ export default function LaborSection({ value, onChange }: Props) {
 
           {/* Subtotals breakdown */}
           <div className="mt-5 rounded-lg bg-[#FAFAFA] border border-gray-200 divide-y divide-gray-200">
-            {fixedPresent && (
-              <SubRow label="Subtotal preço fixo" value={fixedValue} />
+            {fixedPresent && fixedTotal > 0 && (
+              <SubRow label="Subtotal preço fixo" value={fixedTotal} />
             )}
             {unitSum > 0 && (
               <SubRow label="Subtotal por unidade" value={unitSum} />
@@ -356,9 +387,24 @@ function LaborItemRow({ index, item, onChange, onRemove }: ItemRowProps) {
 
       {/* Type-specific fields */}
       {item.type === 'fixo' && (
-        <p className="text-xs text-gray-500 italic">
-          Valor será informado no campo compartilhado abaixo da lista.
-        </p>
+        <div>
+          <label className="label text-xs">
+            Valor individual (R$){' '}
+            <span className="text-gray-400 font-normal">— opcional</span>
+          </label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            className="input-base max-w-xs"
+            placeholder="Deixe vazio para usar só o valor compartilhado"
+            value={item.itemValue ?? ''}
+            onChange={(e) => onChange({ itemValue: e.target.value })}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Se informado, soma ao valor compartilhado do grupo no total do preço fixo.
+          </p>
+        </div>
       )}
 
       {item.type === 'por_unidade' && (

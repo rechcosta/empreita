@@ -14,19 +14,23 @@ const MaterialSchema = new Schema({
 const LaborItemSchema = new Schema({
   type:        { type: String, enum: ['fixo', 'por_unidade', 'por_m2'], required: true },
   description: { type: String, required: true, trim: true },
+  // fixo — individual value is optional; null means the item is covered only
+  // by `labor.fixedGroupValue`. When informed, it sums to the group total.
+  itemValue:   { type: Number, default: null, min: 0 },
   // por_unidade
   quantity:    { type: Number, min: 0 },
   unitPrice:   { type: Number, min: 0 },
   // por_m2
   area:          { type: Number, min: 0 },
   pricePerMeter: { type: Number, min: 0 },
-  // por_unidade | por_m2 only. Fixed items have no subtotal (covered by fixedGroupValue).
+  // por_unidade | por_m2 only
   subtotal:    { type: Number, min: 0 },
 }, { _id: false })
 
 const LaborSchema = new Schema({
   items:           { type: [LaborItemSchema], default: [] },
-  // null when there is no fixed item in the list.
+  // null when there is no fixed item in the list, or when every fixed item
+  // uses its own `itemValue` exclusively.
   fixedGroupValue: { type: Number, default: null, min: 0 },
   total:           { type: Number, required: true, min: 0 },
 }, { _id: false })
@@ -47,6 +51,7 @@ export interface IOrcamento extends Document {
     items: Array<{
       type: 'fixo' | 'por_unidade' | 'por_m2'
       description: string
+      itemValue?: number | null
       quantity?: number
       unitPrice?: number
       area?: number
@@ -79,4 +84,4 @@ const OrcamentoSchema = new Schema<IOrcamento>(
 const Orcamento: Model<IOrcamento> =
   mongoose.models.Orcamento ?? mongoose.model<IOrcamento>('Orcamento', OrcamentoSchema)
 
-export default Orcamento  
+export default Orcamento

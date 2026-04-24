@@ -1,6 +1,6 @@
 # Empreita
 
-Plataforma web para empresas de construção e prestação de serviços criarem, gerenciarem e enviarem orçamentos profissionais em PDF.
+Plataforma web para construtoras e prestadores de serviços criarem, gerenciarem e enviarem orçamentos profissionais em PDF.
 
 ---
 

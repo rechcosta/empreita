@@ -249,10 +249,6 @@ npx vitest run tests/lib/labor.test.ts
 
 **`tests/lib/utils.test.ts`** — o algoritmo de validação de CNPJ (formato, sequência repetida, dígitos verificadores DV1 e DV2) e a função `formatCurrencyOrDash` que codifica a regra de domínio "null vira `—`, mas 0 é R$ 0,00".
 
-### Onde adicionar testes novos
-
-Quando adicionar uma nova função pura em `lib/`, crie um arquivo espelhado em `tests/lib/`. Quando aparecer um bug de cálculo na vida real, escreva um teste reproduzindo o caso *antes* de corrigir — isso transforma cada bug em uma regressão protegida.
-
 ---
 
 ## Deploy

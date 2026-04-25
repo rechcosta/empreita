@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { connectDB } from '@/lib/db'
 import Orcamento from '@/models/Orcamento'
+import { nextSequence } from '@/models/Counter'
 import { computeLaborTotal } from '@/lib/labor'
 import { Labor } from '@/types'
 
@@ -50,8 +51,15 @@ export async function POST(req: NextRequest) {
     const grandTotal = materialsTotal + laborTotal
 
     await connectDB()
+
+    // Reserve the next number for this user. Done before create so that if
+    // the create fails for any reason, we burn a sequence value but keep
+    // monotonicity — a gap is preferable to two budgets sharing a number.
+    const number = await nextSequence(`orcamento:${session.user.id}`)
+
     const orc = await Orcamento.create({
       userId: session.user.id,
+      number,
       clientName: clientName.trim(),
       clientAddress: clientAddress.trim(),
       serviceName: serviceName.trim(),

@@ -36,8 +36,9 @@ A plataforma permite:
 - **Compor orçamentos** combinando materiais e mão de obra no mesmo documento
 - **Misturar três tipos de mão de obra** no mesmo orçamento — preço fixo (lista de serviços combinados), por unidade (cálculo por quantidade) e por m² (cálculo por área)
 - **Deixar materiais sem preço** quando o valor ainda não foi cotado, mantendo o item no orçamento sem afetar o subtotal
+- **Numerar orçamentos sequencialmente** por conta (`ORC-0001`, `ORC-0002`, ...) com geração atômica e à prova de colisão
 - **Gerar PDF profissional** com identidade visual da empresa, pronto para envio ao cliente
-- **Listar e editar orçamentos anteriores** em dashboard privado por conta
+- **Listar, buscar e editar orçamentos anteriores** em dashboard privado por conta — busca filtra por nome do cliente, serviço ou número
 
 ---
 
@@ -51,6 +52,7 @@ A plataforma permite:
 | Autenticação | NextAuth.js (JWT, Credentials Provider) |
 | UI | Tailwind CSS |
 | Geração de PDF | jsPDF + jspdf-autotable (client-side) |
+| Testes | Vitest |
 | Deploy | Vercel + MongoDB Atlas |
 
 Decisões de stack e justificativa: ver [`ARCHITECTURE.md`](./ARCHITECTURE.md).
@@ -82,7 +84,8 @@ Decisões de stack e justificativa: ver [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 │  ┌──────────────────▼─────────────────────────┐  │
 │  │  Camada de dados (Mongoose)                │  │
 │  │  ├─ User                                   │  │
-│  │  └─ Orcamento                              │  │
+│  │  ├─ Orcamento                              │  │
+│  │  └─ Counter (numeração sequencial atômica) │  │
 │  └──────────────────┬─────────────────────────┘  │
 └─────────────────────┼────────────────────────────┘
                       │
@@ -121,18 +124,26 @@ empreita/
 │   ├── db.ts                      # Singleton Mongo
 │   ├── labor.ts                   # Cálculos centralizados de mão de obra
 │   ├── pdf.ts                     # Geração de PDF
+│   ├── rateLimit.ts               # Limitador in-memory para login
 │   └── utils.ts                   # Formatação (moeda, CNPJ, datas)
 │
 ├── models/
+│   ├── Counter.ts                 # Contador atômico para numeração
 │   ├── User.ts                    # Empresa prestadora
 │   └── Orcamento.ts               # Orçamento com materiais + labor
+│
+├── tests/                         # Testes automatizados (Vitest)
+│   └── lib/
+│       ├── labor.test.ts          # Fórmula canônica + casos de borda
+│       └── utils.test.ts          # validateCNPJ + formatação
 │
 ├── types/
 │   ├── index.ts                   # Tipos compartilhados
 │   └── next-auth.d.ts             # Augmentação de tipos do NextAuth
 │
 ├── middleware.ts                  # Proteção de rotas
-└── tailwind.config.ts             # Paleta + tokens do design system
+├── tailwind.config.ts             # Paleta + tokens do design system
+└── vitest.config.ts               # Config dos testes
 ```
 
 Detalhes em [`ARCHITECTURE.md`](./ARCHITECTURE.md).
@@ -191,6 +202,59 @@ npm run lint
 
 ---
 
+## Testes
+
+O projeto usa [Vitest](https://vitest.dev/) para testes unitários. A cobertura atual foca nas funções puras críticas para o domínio: `lib/labor.ts` (fórmula canônica do total de mão de obra) e `lib/utils.ts` (`validateCNPJ` e formatação de moeda com a distinção `null` vs `0`).
+
+### Rodar todos os testes
+
+```bash
+npm test
+```
+
+Saída esperada:
+
+```
+ ✓ tests/lib/labor.test.ts  (24 tests)
+ ✓ tests/lib/utils.test.ts  (22 tests)
+
+ Test Files  2 passed (2)
+      Tests  46 passed (46)
+```
+
+### Modo watch (desenvolvimento)
+
+```bash
+npm run test:watch
+```
+
+Re-roda automaticamente quando arquivos são salvos. Útil enquanto se mexe na fórmula de labor ou em utilitários.
+
+### Rodar um arquivo específico
+
+```bash
+npx vitest run tests/lib/labor.test.ts
+```
+
+### O que os testes cobrem
+
+**`tests/lib/labor.test.ts`** — todos os caminhos da fórmula `total = (fixedGroupValue ?? 0) + Σ(itemValue) + Σ(unit subtotals) + Σ(sqm subtotals)`, incluindo:
+
+- Casos vazios e mínimos
+- Itens fixos cobertos só pelo grupo, só individuais, e ambos somando
+- A distinção semântica entre `itemValue: null` (não informado, contribui 0) e `itemValue: 0` (preço explicitamente zero)
+- Mistura dos três tipos no mesmo orçamento
+- Arredondamento defensivo contra float drift (`0.1 + 0.2`)
+- Items malformados (subtotal undefined) não devem retornar `NaN`
+
+**`tests/lib/utils.test.ts`** — o algoritmo de validação de CNPJ (formato, sequência repetida, dígitos verificadores DV1 e DV2) e a função `formatCurrencyOrDash` que codifica a regra de domínio "null vira `—`, mas 0 é R$ 0,00".
+
+### Onde adicionar testes novos
+
+Quando adicionar uma nova função pura em `lib/`, crie um arquivo espelhado em `tests/lib/`. Quando aparecer um bug de cálculo na vida real, escreva um teste reproduzindo o caso *antes* de corrigir — isso transforma cada bug em uma regressão protegida.
+
+---
+
 ## Deploy
 
 ### MongoDB Atlas
@@ -220,7 +284,7 @@ npm run lint
 ```typescript
 {
   companyName: string
-  cnpj: string (unique)
+  cnpj: string (unique, valida dígitos verificadores no registro)
   logoBase64?: string
   email: string (unique)
   password: string (bcrypt hash, select: false)
@@ -232,6 +296,7 @@ npm run lint
 ```typescript
 {
   userId: ObjectId → User
+  number?: number              // sequencial por conta (ORC-0001, ORC-0002...)
   clientName: string
   clientAddress: string
   serviceName: string
@@ -264,6 +329,15 @@ LaborItem =
   | { type: 'por_m2', description, area, pricePerMeter, subtotal }
 ```
 
+### Counter (numeração sequencial)
+
+```typescript
+{
+  name: string (unique)         // ex: "orcamento:{userId}"
+  seq: number                   // último valor atribuído
+}
+```
+
 Discussão completa do modelo e das regras de negócio em [`ARCHITECTURE.md`](./ARCHITECTURE.md#modelo-de-dados).
 
 ---
@@ -275,9 +349,9 @@ Todas as rotas exceto `/api/register` e `/api/auth/*` exigem sessão autenticada
 | Método | Rota | Descrição |
 |---|---|---|
 | `POST` | `/api/register` | Cadastro de empresa prestadora |
-| `POST` | `/api/auth/signin` | Login (gerenciado pelo NextAuth) |
+| `POST` | `/api/auth/signin` | Login (gerenciado pelo NextAuth, com rate limit de 5/15min por email) |
 | `GET` | `/api/orcamentos` | Lista orçamentos do usuário autenticado |
-| `POST` | `/api/orcamentos` | Cria orçamento |
+| `POST` | `/api/orcamentos` | Cria orçamento (atribui número sequencial) |
 | `GET` | `/api/orcamentos/:id` | Busca orçamento (apenas do dono) |
 | `PUT` | `/api/orcamentos/:id` | Atualiza orçamento |
 | `DELETE` | `/api/orcamentos/:id` | Exclui orçamento |
@@ -295,6 +369,7 @@ Algumas regras valem destaque porque não são óbvias:
 - **Os 3 tipos de mão de obra podem coexistir no mesmo orçamento.** Preço fixo (serviços combinados), por unidade (qtd × valor) e por m² (área × valor/m²) se somam no total final.
 - **Preço fixo tem duas fontes de valor.** Há um valor compartilhado do grupo (`fixedGroupValue`) que se aplica a todos os itens fixos do orçamento, e cada item fixo pode opcionalmente ter um `itemValue` individual. Ambos são opcionais. O subtotal do grupo é a soma dos dois: `(fixedGroupValue ?? 0) + Σ(itemValue)`. Se todos os itens fixos forem removidos, o `fixedGroupValue` é zerado automaticamente.
 - **Totais são recalculados no servidor.** O cliente envia os números, mas a API sempre recomputa `materialsTotal`, `labor.total` e `grandTotal` antes de persistir. Protege contra dados adulterados.
+- **Numeração é sequencial e por conta.** Cada empresa tem sua própria sequência (Empresa A pode estar no `ORC-0047` enquanto Empresa B está no `ORC-0003`). Atribuída atomicamente via collection `Counter` no momento do `POST`. Imutável depois disso — editar não muda o número.
 
 Justificativa e alternativas consideradas em [`ARCHITECTURE.md`](./ARCHITECTURE.md#decisões-de-domínio).
 
@@ -304,7 +379,7 @@ Justificativa e alternativas consideradas em [`ARCHITECTURE.md`](./ARCHITECTURE.
 
 Fluxo mínimo que cobre as regras principais:
 
-1. Criar conta com CNPJ válido e logo opcional
+1. Criar conta com CNPJ válido (com dígitos verificadores corretos) e logo opcional
 2. Criar orçamento com:
    - Cliente com endereço longo (para validar quebra de linha no PDF)
    - 1 material com preço, 1 material sem preço
@@ -312,15 +387,19 @@ Fluxo mínimo que cobre as regras principais:
    - 1 item "por unidade"
    - 1 item "por m²"
    - `fixedGroupValue` com algum valor
-3. Verificar no dashboard: total bate com a soma `materiais + grupo fixo + soma dos itemValues + por_unidade + por_m2`
-4. Gerar PDF:
+3. Verificar no dashboard:
+   - Aparece com número (`ORC-0001`)
+   - Total bate com a soma `materiais + grupo fixo + soma dos itemValues + por_unidade + por_m2`
+4. Buscar pelo nome do cliente, depois pelo número (`17` ou `ORC-0017`) — ambos devem encontrar
+5. Gerar PDF:
    - Materiais sem preço aparecem com "—"
    - Item fixo sem `itemValue` mostra "—" na coluna direita
    - Item fixo com `itemValue` mostra o valor
    - Linha "Valor compartilhado do grupo" aparece quando `fixedGroupValue > 0`
    - Subtotal preço fixo = grupo + individuais
    - Total geral correto
-5. Editar orçamento, remover todos os itens fixos, salvar: `fixedGroupValue` é zerado automaticamente
+   - Número do orçamento no formato `ORC-XXXX`
+6. Editar orçamento, remover todos os itens fixos, salvar: `fixedGroupValue` é zerado automaticamente
 
 ---
 

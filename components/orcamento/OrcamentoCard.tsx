@@ -12,6 +12,7 @@ interface Props {
 export default function OrcamentoCard({ orcamento, onDelete }: Props) {
   const {
     _id,
+    number,
     clientName,
     serviceName,
     grandTotal,
@@ -23,10 +24,21 @@ export default function OrcamentoCard({ orcamento, onDelete }: Props) {
 
   const laborItemCount = labor.items?.length ?? 0
 
+  // Display the sequential number when available; legacy documents have no
+  // number and simply hide the badge — the rest of the card still works.
+  const numberLabel = number !== undefined && number !== null
+    ? `ORC-${number.toString().padStart(4, '0')}`
+    : null
+
   return (
     <div className="card p-5 flex flex-col gap-3 hover:border-gray-300 hover:shadow-md transition-all">
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
+          {numberLabel && (
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
+              {numberLabel}
+            </p>
+          )}
           <h3 className="font-semibold text-gray-900 truncate">{serviceName}</h3>
           {clientName && (
             <p className="text-xs text-gray-600 mt-0.5 truncate">{clientName}</p>

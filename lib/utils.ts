@@ -31,10 +31,44 @@ export function formatCNPJ(value: string): string {
     .replace(/(\d{4})(\d)/, '$1-$2')
 }
 
+/**
+ * Validates a Brazilian CNPJ.
+ *
+ * Rules applied (in order):
+ * 1. Must have exactly 14 digits after stripping non-digits.
+ * 2. Cannot be a sequence of identical digits (00000000000000, 11111111111111, …).
+ *    These pass the DV math but are invalid by SRF convention.
+ * 3. The two check digits (DV1, DV2) must match the standard CNPJ algorithm.
+ *
+ * Algorithm:
+ *   DV1 = mod11 of (sum of first 12 digits × weights [5,4,3,2,9,8,7,6,5,4,3,2])
+ *   DV2 = mod11 of (sum of first 13 digits × weights [6,5,4,3,2,9,8,7,6,5,4,3,2])
+ *   where mod11(x) = (x % 11 < 2) ? 0 : 11 - (x % 11)
+ */
 export function validateCNPJ(cnpj: string): boolean {
   const digits = cnpj.replace(/\D/g, '')
+
   if (digits.length !== 14) return false
   if (/^(\d)\1+$/.test(digits)) return false
+
+  const calcCheckDigit = (base: string, weights: number[]): number => {
+    const sum = weights.reduce(
+      (acc, weight, i) => acc + parseInt(base[i], 10) * weight,
+      0
+    )
+    const remainder = sum % 11
+    return remainder < 2 ? 0 : 11 - remainder
+  }
+
+  const weights1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+  const weights2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+
+  const dv1 = calcCheckDigit(digits.slice(0, 12), weights1)
+  if (dv1 !== parseInt(digits[12], 10)) return false
+
+  const dv2 = calcCheckDigit(digits.slice(0, 13), weights2)
+  if (dv2 !== parseInt(digits[13], 10)) return false
+
   return true
 }
 

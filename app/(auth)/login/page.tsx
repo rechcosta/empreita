@@ -26,7 +26,14 @@ export default function LoginPage() {
 
     setLoading(false)
     if (res?.error) {
-      setError('Email ou senha inválidos.')
+      // NextAuth surfaces the thrown Error message via res.error. We forward
+      // the rate-limit message verbatim and fall back to a generic credentials
+      // message otherwise — never leak whether the email exists.
+      if (res.error.startsWith('Muitas tentativas')) {
+        setError(res.error)
+      } else {
+        setError('Email ou senha inválidos.')
+      }
     } else {
       router.push('/dashboard')
       router.refresh()

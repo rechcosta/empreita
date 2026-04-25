@@ -71,6 +71,12 @@ export interface Labor {
 export interface Orcamento {
   _id?: string
   userId?: string
+  /**
+   * Per-account sequential number, formatted in the PDF as `ORC-{padded}`.
+   * Optional because documents created before the counter existed don't
+   * have it — the PDF generator falls back to an ObjectId-derived format.
+   */
+  number?: number
   clientName: string
   clientAddress: string
   serviceName: string

@@ -84,7 +84,12 @@ export function generateOrcamentoPDF(
   setInk(inkLight)
   doc.text(`CNPJ: ${company.cnpj}`, logoEndX, headerTop + 10.5)
 
-  const budgetNumber = (orcamento._id ?? '').toUpperCase().slice(-7).replace(/(.{4})(.+)/, '$1-$2') || 'NOVO'
+  // Prefer the per-account sequential number; fall back to the legacy
+  // ObjectId-derived format for documents created before the counter existed.
+  const budgetNumber = orcamento.number !== undefined && orcamento.number !== null
+    ? `ORC-${orcamento.number.toString().padStart(4, '0')}`
+    : ((orcamento._id ?? '').toUpperCase().slice(-7).replace(/(.{4})(.+)/, '$1-$2') || 'NOVO')
+
   const dateStr = orcamento.createdAt
     ? new Intl.DateTimeFormat('pt-BR').format(new Date(orcamento.createdAt))
     : new Intl.DateTimeFormat('pt-BR').format(new Date())

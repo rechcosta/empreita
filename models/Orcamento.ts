@@ -37,6 +37,12 @@ const LaborSchema = new Schema({
 
 export interface IOrcamento extends Document {
   userId: mongoose.Types.ObjectId
+  /**
+   * Per-account sequential number (1, 2, 3…). Assigned at creation via the
+   * Counter collection. Optional in the schema so pre-counter documents
+   * still load — those fall back to ObjectId-based display in the PDF.
+   */
+  number?: number
   clientName: string
   clientAddress: string
   serviceName: string
@@ -70,6 +76,9 @@ export interface IOrcamento extends Document {
 const OrcamentoSchema = new Schema<IOrcamento>(
   {
     userId:        { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    // Optional: pre-existing documents won't have it. Compound index with
+    // userId so we can look up by (userId, number) efficiently if needed.
+    number:        { type: Number, default: null, min: 1 },
     clientName:    { type: String, required: [true, 'Nome do cliente obrigatório'], trim: true },
     clientAddress: { type: String, required: [true, 'Endereço obrigatório'], trim: true },
     serviceName:   { type: String, required: [true, 'Nome do serviço obrigatório'], trim: true },
@@ -80,6 +89,11 @@ const OrcamentoSchema = new Schema<IOrcamento>(
   },
   { timestamps: true }
 )
+
+// Compound index for the dashboard query (newest first per user) and for
+// any future "find by number" lookups.
+OrcamentoSchema.index({ userId: 1, createdAt: -1 })
+OrcamentoSchema.index({ userId: 1, number: 1 })
 
 const Orcamento: Model<IOrcamento> =
   mongoose.models.Orcamento ?? mongoose.model<IOrcamento>('Orcamento', OrcamentoSchema)

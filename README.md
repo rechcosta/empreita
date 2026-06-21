@@ -40,6 +40,15 @@ A plataforma permite:
 - **Gerar PDF profissional** com identidade visual da empresa, pronto para envio ao cliente
 - **Listar, buscar e editar orçamentos anteriores** em dashboard privado por conta — busca filtra por nome do cliente, serviço ou número
 
+E, no módulo de **Gestão de Funcionários**:
+
+- **Cadastrar funcionários** com dados pessoais, cargo, configuração salarial (diário/semanal/quinzenal/mensal) e dívida inicial opcional
+- **Registrar adiantamentos e dívidas**, que reduzem automaticamente o próximo pagamento
+- **Pagar funcionários** com cálculo automático do líquido (salário − adiantamentos − dívidas), fechamento do ciclo e cálculo do próximo vencimento
+- **Gerar comprovante de pagamento em PDF** com assinaturas e QR Code de validação
+- **Acompanhar o histórico financeiro auditável** de cada funcionário (lançamentos imutáveis, soft delete, responsável e data/hora)
+- **Visualizar indicadores e gráficos** no dashboard de funcionários (folha salarial, adiantamentos, dívidas, próximos pagamentos)
+
 ---
 
 ## Stack
@@ -248,10 +257,6 @@ npx vitest run tests/lib/labor.test.ts
 - Items malformados (subtotal undefined) não devem retornar `NaN`
 
 **`tests/lib/utils.test.ts`** — o algoritmo de validação de CNPJ (formato, sequência repetida, dígitos verificadores DV1 e DV2) e a função `formatCurrencyOrDash` que codifica a regra de domínio "null vira `—`, mas 0 é R$ 0,00".
-
-### Onde adicionar testes novos
-
-Quando adicionar uma nova função pura em `lib/`, crie um arquivo espelhado em `tests/lib/`. Quando aparecer um bug de cálculo na vida real, escreva um teste reproduzindo o caso *antes* de corrigir — isso transforma cada bug em uma regressão protegida.
 
 ---
 

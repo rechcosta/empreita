@@ -89,9 +89,241 @@ export interface Orcamento {
   updatedAt?: string
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Recibo de Prestação de Serviços (digitalização do bloco em papel)
+// ─────────────────────────────────────────────────────────────────
+
+/** Linha da tabela "Quant. / Descrição dos Serviços / Valores". */
+export interface ReciboItem {
+  /** Quantidade — null quando em branco (ex.: serviço por preço fixo). */
+  quantity: number | null
+  description: string
+  /** Valor da linha — null quando em branco. */
+  value: number | null
+}
+
+/**
+ * Recibo de prestação de serviços, derivado de um orçamento mas independente
+ * (campos editáveis). Numeração própria por empresa (REC-0001…) via Counter.
+ */
+export interface Recibo {
+  _id?: string
+  userId?: string
+  /** Sequencial por empresa, formatado como `REC-{padded}`. */
+  number?: number
+  /** Orçamento de origem (quando gerado a partir de um). */
+  orcamentoId?: string | null
+  /** Cidade da linha de local/data ("{cidade}, dd de mês de aaaa"). */
+  city: string
+  /** Data do recibo (ISO). */
+  date: string
+  /** "Firma ou Sr." — tomador do serviço. */
+  clientName: string
+  clientAddress: string
+  clientAddressNumber: string
+  clientNeighborhood: string
+  clientCity: string
+  clientState: string
+  clientCnpj: string
+  clientInscricaoEstadual: string
+  items: ReciboItem[]
+  /** Mão de Obra (R$). */
+  laborTotal: number
+  /** Material Empregado (R$). */
+  materialsTotal: number
+  /** TOTAL (R$). */
+  total: number
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface CompanyInfo {
   companyName: string
   cnpj: string
   logoBase64?: string
   email: string
+  /** Optional — shown in the payment receipt header when present. */
+  address?: string
+  phone?: string
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Gestão de Funcionários (Employee management)
+// ─────────────────────────────────────────────────────────────────
+
+/** Ciclo de pagamento do funcionário. Define o cálculo do próximo vencimento. */
+export type PaymentType = 'diario' | 'semanal' | 'quinzenal' | 'mensal'
+
+/**
+ * Tipos de lançamento no histórico financeiro do funcionário.
+ * - `divida_inicial`  — dívida registrada no cadastro (status pendente até quitada).
+ * - `adiantamento`    — vale/empréstimo/etc. (status pendente até descontado num pagamento).
+ * - `pagamento`       — salário pago (status `pago`, nunca excluído).
+ * - `observacao`      — nota livre, sem valor financeiro.
+ */
+export type TransactionType =
+  | 'divida_inicial'
+  | 'adiantamento'
+  | 'pagamento'
+  | 'observacao'
+
+/** Categorias possíveis para um adiantamento. */
+export type AdvanceCategory =
+  | 'vale'
+  | 'emprestimo'
+  | 'emergencia'
+  | 'equipamentos'
+  | 'outro'
+
+/**
+ * Status de um lançamento:
+ * - `pendente`   — adiantamento/dívida ainda não descontado.
+ * - `quitado`    — adiantamento/dívida já descontado num pagamento.
+ * - `pago`       — lançamento de pagamento concluído.
+ * - `registrado` — observação (sem efeito financeiro).
+ */
+export type TransactionStatus = 'pendente' | 'quitado' | 'pago' | 'registrado'
+
+/** Detalhamento financeiro persistido junto ao lançamento de `pagamento`. */
+export interface PaymentDetails {
+  baseSalary: number
+  advancesDiscounted: number
+  debtsDiscounted: number
+  totalDiscounts: number
+  netAmount: number
+  /** Diaristas: dias trabalhados no ciclo e valor diário (base = dias × diária). */
+  daysWorked?: number
+  dailyRate?: number
+  /** Demais tipos: faltas no ciclo e valor descontado por elas. */
+  absenceDays?: number
+  absenceDeduction?: number
+  /** Ex: "Semanal · 12/06 a 18/06". Texto livre para o comprovante. */
+  periodLabel?: string
+  /** Ids dos adiantamentos/dívidas quitados por este pagamento. */
+  discountedTransactionIds: string[]
+}
+
+export interface EmployeeTransaction {
+  _id?: string
+  userId?: string
+  employeeId: string
+  type: TransactionType
+  amount: number
+  date: string
+  /** Motivo (dívida/adiantamento) ou descrição (observação). */
+  reason?: string
+  category?: AdvanceCategory | null
+  status: TransactionStatus
+  paymentDetails?: PaymentDetails | null
+  /** Para adiantamentos/dívidas: id do pagamento que os quitou. */
+  settledByPaymentId?: string | null
+  /** Auditoria — quem lançou. */
+  responsibleUserId?: string
+  responsibleName?: string
+  deletedAt?: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface Employee {
+  _id?: string
+  userId?: string
+  fullName: string
+  /** Apenas dígitos (11). Formatado para exibição via formatCPF. */
+  cpf: string
+  birthDate?: string | null
+  phone?: string
+  address?: string
+  role: string
+  admissionDate?: string | null
+  notes?: string
+  paymentType: PaymentType
+  baseSalary: number
+  nextPaymentDate?: string | null
+  active?: boolean
+  deletedAt?: string | null
+  createdByUserId?: string
+  createdByName?: string
+  createdAt?: string
+  updatedAt?: string
+
+  // Campos computados pela API (não persistidos no documento Employee):
+  /** Soma de adiantamentos pendentes. */
+  pendingAdvancesTotal?: number
+  /** Soma de dívidas pendentes. */
+  pendingDebtsTotal?: number
+  /** Valor líquido previsto para o próximo pagamento. */
+  netForecast?: number
+  /** Diaristas: dias trabalhados no ciclo aberto (presenças não pagas). */
+  workedDays?: number
+  /** Diaristas: valor bruto acumulado (workedDays × baseSalary). */
+  accumulatedValue?: number
+}
+
+/** Registro de presença de um diarista num dia. */
+export interface Attendance {
+  _id?: string
+  userId?: string
+  employeeId: string
+  date: string
+  present: boolean
+  settledByPaymentId?: string | null
+  responsibleName?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+/** Linha do registro de presença (roll-call) por dia. */
+export interface AttendanceRow {
+  employeeId: string
+  fullName: string
+  role: string
+  paymentType: PaymentType
+  baseSalary: number
+  /** Valor de um dia (diária, ou salário ÷ dias do período). */
+  dailyRate: number
+  present: boolean
+}
+
+/** Totais financeiros computados de um funcionário. */
+export interface EmployeeFinancials {
+  pendingAdvancesTotal: number
+  pendingDebtsTotal: number
+  totalDiscountsPending: number
+  /** Base − descontos pendentes (mínimo 0). Para diaristas, base = valor acumulado. */
+  netForecast: number
+  nextPaymentDate: string | null
+  /** Valor de um dia de trabalho (diária ou salário ÷ dias do período). */
+  dailyRate?: number
+  /** Diaristas: dias trabalhados no ciclo aberto. */
+  workedDays?: number
+  /** Diaristas: valor bruto acumulado (workedDays × baseSalary). */
+  accumulatedValue?: number
+  /** Demais tipos: faltas no ciclo aberto e valor a descontar por elas. */
+  absenceDays?: number
+  absenceDeduction?: number
+}
+
+/** Payload de GET /api/funcionarios/[id]. */
+export interface EmployeeDetail {
+  employee: Employee
+  transactions: EmployeeTransaction[]
+  financials: EmployeeFinancials
+}
+
+/** Payload de GET /api/funcionarios/dashboard. */
+export interface EmployeesDashboard {
+  totalEmployees: number
+  payrollTotal: number
+  pendingAdvancesTotal: number
+  pendingDebtsTotal: number
+  upcomingPayments: Array<{
+    employeeId: string
+    fullName: string
+    role: string
+    nextPaymentDate: string | null
+    netForecast: number
+  }>
+  monthlyPayments: Array<{ month: string; total: number; count: number }>
+  advancesByEmployee: Array<{ fullName: string; total: number }>
 }

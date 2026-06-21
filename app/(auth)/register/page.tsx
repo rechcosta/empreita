@@ -17,6 +17,8 @@ export default function RegisterPage() {
     companyName: '',
     cnpj: '',
     email: '',
+    address: '',
+    phone: '',
     password: '',
     confirmPassword: '',
     logoBase64: '',
@@ -73,6 +75,8 @@ export default function RegisterPage() {
         companyName: form.companyName,
         cnpj: form.cnpj,
         email: form.email,
+        address: form.address,
+        phone: form.phone,
         password: form.password,
         logoBase64: form.logoBase64 || null,
       }),
@@ -158,6 +162,28 @@ export default function RegisterPage() {
                 placeholder="contato@empresa.com" value={form.email}
                 onChange={handleChange} required />
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">
+                  Telefone <span className="text-gray-400 font-normal">— opcional</span>
+                </label>
+                <input name="phone" type="text" className="input-base"
+                  placeholder="(11) 99999-9999" value={form.phone}
+                  onChange={handleChange} />
+              </div>
+              <div>
+                <label className="label">
+                  Endereço <span className="text-gray-400 font-normal">— opcional</span>
+                </label>
+                <input name="address" type="text" className="input-base"
+                  placeholder="Rua, nº, cidade/UF" value={form.address}
+                  onChange={handleChange} />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 -mt-2">
+              Telefone e endereço aparecem no cabeçalho dos comprovantes de pagamento.
+            </p>
 
             <div className="grid grid-cols-2 gap-3">
               <div>

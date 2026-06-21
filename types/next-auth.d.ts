@@ -8,6 +8,8 @@ declare module 'next-auth' {
       companyName: string
       cnpj: string
       logoBase64?: string
+      address?: string
+      phone?: string
     } & DefaultSession['user']
   }
 

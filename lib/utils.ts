@@ -72,6 +72,55 @@ export function validateCNPJ(cnpj: string): boolean {
   return true
 }
 
+/**
+ * Máscara de CPF: 000.000.000-00. Aceita entrada parcial (formata enquanto
+ * digita) e ignora não-dígitos, limitando a 11 dígitos.
+ */
+export function formatCPF(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 11)
+  return digits
+    .replace(/^(\d{3})(\d)/, '$1.$2')
+    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1-$2')
+}
+
+/**
+ * Valida um CPF brasileiro.
+ *
+ * Regras (em ordem):
+ * 1. Exatamente 11 dígitos após remover não-dígitos.
+ * 2. Não pode ser sequência de dígitos idênticos (000…, 111…) — passam na
+ *    matemática do DV mas são inválidos por convenção.
+ * 3. Os dois dígitos verificadores devem bater com o algoritmo padrão.
+ *
+ * Algoritmo:
+ *   DV1 = mod11 de (Σ 9 primeiros dígitos × pesos [10..2])
+ *   DV2 = mod11 de (Σ 10 primeiros dígitos × pesos [11..2])
+ *   onde mod11(x) = (x % 11 < 2) ? 0 : 11 - (x % 11)
+ */
+export function validateCPF(cpf: string): boolean {
+  const digits = cpf.replace(/\D/g, '')
+
+  if (digits.length !== 11) return false
+  if (/^(\d)\1+$/.test(digits)) return false
+
+  const calcCheckDigit = (length: number): number => {
+    let sum = 0
+    let weight = length + 1
+    for (let i = 0; i < length; i++) {
+      sum += parseInt(digits[i], 10) * weight
+      weight--
+    }
+    const remainder = sum % 11
+    return remainder < 2 ? 0 : 11 - remainder
+  }
+
+  if (calcCheckDigit(9) !== parseInt(digits[9], 10)) return false
+  if (calcCheckDigit(10) !== parseInt(digits[10], 10)) return false
+
+  return true
+}
+
 export function cn(...classes: (string | undefined | false | null)[]): string {
   return classes.filter(Boolean).join(' ')
 }

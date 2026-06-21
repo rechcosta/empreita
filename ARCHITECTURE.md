@@ -315,6 +315,8 @@ export async function nextSequence(name: string): Promise<number> {
 
 Chamado no `POST /api/orcamentos` com `name = "orcamento:{userId}"`. A atomicidade vem do `$inc` do MongoDB — dois requests simultâneos para o mesmo usuário recebem valores distintos sem coordenação no app.
 
+O mesmo mecanismo numera os **recibos** com `name = "recibo:{userId}"` (sequência própria, `REC-0001…`), independente da dos orçamentos.
+
 ### Por que sequencial **por conta**, não global
 
 Empresa A pode estar no orçamento 47, Empresa B no 3. Cada uma vê sua própria progressão, que é o que faz sentido para o usuário final.
@@ -389,6 +391,62 @@ O PDF usa as mesmas cores da UI para coerência visual:
 - `#E5E7EB` como borda única em todo lugar
 
 O documento **imprime legivelmente em preto e branco**. Cor é informacional, não decorativa.
+
+---
+
+## Recibos de prestação de serviços
+
+Digitalização do bloco de papel "Recibo de Prestação de Serviços". É uma
+entidade própria (`models/Recibo.ts`), **não** um modo de visualização do
+orçamento — depois de gerado, o recibo vive por conta própria e é editável sem
+mexer no orçamento de origem.
+
+### Por que entidade salva, e não PDF efêmero
+
+O usuário pediu para "digitalizar os recibos": o valor está em **manter o
+registro** (listar, reemitir, corrigir), como o canhoto do bloco físico. Por
+isso o recibo é persistido com numeração própria (`REC-0001…`, via o mesmo
+`Counter`) e listado em `/recibos`.
+
+### Derivação a partir do orçamento
+
+`/recibos/novo?orcamento={id}` pré-preenche o formulário a partir do orçamento
+(`buildReciboItemsFromOrcamento` em `lib/recibo.ts`):
+
+- **Firma ou Sr.** ← `clientName`; **Endereço** ← `clientAddress`.
+- Cada serviço de mão de obra vira uma linha (`por_unidade`/`por_m2` levam a
+  quantidade; `fixo` entra sem quantidade). Item de preço fixo **com** valor
+  individual mostra o valor; **sem** valor fica em branco (é coberto pelo valor
+  compartilhado do grupo).
+- O **valor compartilhado do grupo de preço fixo NÃO vira linha** — entra
+  apenas no total de Mão de Obra. Isso evita dupla contagem: como `labor.total`
+  já soma grupo + valores individuais, criar uma linha extra para o grupo
+  fazia o recibo parecer/ficar maior que o orçamento.
+- Materiais **com preço** viram linhas; sem preço são ignorados (não entram no
+  total, igual ao orçamento).
+- **Mão de Obra** ← `labor.total` (inclui o valor do grupo); **Material
+  Empregado** ← `materialsTotal`; **TOTAL** ← `grandTotal`. Como os três saem
+  do orçamento, o recibo **nunca excede** o orçamento.
+
+Tudo é editável. Os campos do tomador que o orçamento não tem (Nº, bairro,
+município, estado, CNPJ, inscr. est.) ficam em branco para o usuário preencher
+— `clientAddress` do orçamento é texto livre e não dá para fatiar com segurança.
+
+### Totais independentes das linhas
+
+Como no formulário de papel, os valores das linhas são **informativos**: os três
+totais do rodapé são campos próprios (pré-preenchidos do orçamento, editáveis).
+O TOTAL acompanha `Mão de Obra + Material` enquanto o usuário não o edita
+manualmente (flag `totalTouched`).
+
+### PDF: `lib/reciboPdf.ts`
+
+Mesmo padrão client-side do orçamento/comprovante (jsPDF vanilla, sem
+autotable — a tabela é desenhada com `rect`/`line` para imitar as linhas
+guia do bloco). Reproduz: cabeçalho com logo + dados da empresa, título com
+`Nº REC-xxxx`, linha "{cidade}, dd de mês de aaaa", campos do tomador com
+sublinhado, tabela `Quant. | Descrição dos Serviços | Valores` (preenchida até
+um mínimo de linhas para parecer o formulário) e o bloco de totais destacado.
 
 ---
 
@@ -543,6 +601,132 @@ O sistema hoje é bom para **centenas de empresas e dezenas de milhares de orça
 - **CDN para assets** (já coberto pela Vercel).
 - **Pooling de conexão Mongo** mais agressivo em serverless (hoje usa singleton global, funciona mas tem limitações).
 - **Busca server-side com índice de texto** quando a busca client-side ficar lenta (passa a fazer sentido por volta de 500+ orçamentos por usuário).
+
+---
+
+## Módulo de Funcionários
+
+Módulo completo de gestão de funcionários: cadastro, configuração salarial, dívidas, adiantamentos, histórico financeiro auditável, pagamento com fechamento automático de ciclo, comprovante em PDF e dashboard.
+
+### Modelo de dados
+
+Duas novas collections, ambas isoladas por `userId` (multi-tenant):
+
+**`employees`** — o cadastro.
+
+```typescript
+{
+  userId: ObjectId (índice)            // tenant
+  fullName, cpf, role                  // obrigatórios
+  birthDate?, phone?, address?, admissionDate?, notes?
+  paymentType: 'diario'|'semanal'|'quinzenal'|'mensal'
+  baseSalary: number
+  nextPaymentDate?: Date               // recalculado a cada pagamento
+  active: boolean
+  deletedAt?: Date | null              // soft delete
+  createdByUserId?, createdByName?     // auditoria
+  createdAt, updatedAt
+}
+```
+
+**`employeetransactions`** — o **extrato financeiro auditável**, fonte de verdade de toda movimentação.
+
+```typescript
+{
+  userId, employeeId: ObjectId         // índices
+  type: 'divida_inicial'|'adiantamento'|'pagamento'|'observacao'
+  amount: number
+  date: Date
+  reason?, category?                   // motivo / categoria do adiantamento
+  status: 'pendente'|'quitado'|'pago'|'registrado'
+  paymentDetails?: {                   // só em 'pagamento'
+    baseSalary, advancesDiscounted, debtsDiscounted,
+    totalDiscounts, netAmount, periodLabel,
+    discountedTransactionIds: ObjectId[]
+  }
+  settledByPaymentId?: ObjectId        // adiantamento/dívida → pagamento que o quitou
+  responsibleUserId, responsibleName   // auditoria — quem lançou
+  deletedAt?: Date | null              // soft delete
+  createdAt, updatedAt
+}
+```
+
+### Regras de auditoria (impostas no código)
+
+Diferente de `orcamentos` (que usa hard delete — ver [Camada de APIs](#soft-delete-não-aplicado-aqui)), o módulo financeiro segue regras estritas:
+
+- **Multi-tenant** — toda query filtra por `userId`; 404 (não 403) para recursos de outra empresa.
+- **Soft delete** — exclusões marcam `deletedAt`, nunca removem fisicamente.
+- **Pagamentos são imutáveis** — `DELETE` em um lançamento `pagamento` retorna 403. Um adiantamento/dívida já `quitado` também não pode ser excluído (alteraria um pagamento concluído) → 409.
+- **Responsável + data/hora** registrados em todo lançamento (`responsibleUserId`/`responsibleName` + `timestamps`).
+
+### Cálculos financeiros (`lib/payroll.ts`)
+
+Funções puras, testadas em `tests/lib/payroll.test.ts` (convenção do projeto):
+
+- Pagamentos **sempre caem numa sexta-feira**. Há duas funções: `computeFirstPaymentDate` (criação/auto-cura, a partir de hoje) e `computeNextPaymentDate` (avanço do ciclo ao pagar, a partir da competência agendada). Cadência: diário +1d, semanal +7d, quinzenal +14d (`snapToNextFriday`); **mensal cai na última sexta do mês** (`lastFridayOfMonth`) — ao pagar, avança para a última sexta do mês seguinte. Nunca usa a data de admissão (pode ser antiga). O fechamento ancora no vencimento agendado, então pagar adiantado a competência de julho já agenda agosto.
+- `computeNetPayment({ baseSalary, pendingAdvances, pendingDebts })` — fórmula canônica:
+
+  ```
+  Valor Líquido = Salário Base − Adiantamentos Pendentes − Dívidas Pendentes
+  ```
+
+  Com piso em 0: descontos nunca geram valor negativo. Recalculado **sempre no servidor** antes de persistir.
+
+A agregação de pendências (`lib/employeeFinancials.ts`) é server-side (usa o banco), reaproveitada por listagem, detalhe e dashboard.
+
+### Presença, acúmulo (diaristas) e desconto de faltas (demais)
+
+A presença é registrada num roll-call diário (`/funcionarios/presenca`,
+`POST/GET /api/funcionarios/presenca`) para **todos** os funcionários ativos,
+gravando por dia um registro `Attendance` (present true/false) — upsert por
+`(employeeId, date)`, `date` normalizada a 00:00 UTC.
+
+O "valor de um dia" vem de `computeDailyRate` no critério **dias úteis**:
+diário = o próprio valor, semanal ÷5, quinzenal ÷10, mensal ÷22.
+
+- **Diaristas** (`diario`): a base **acumula** = `dias presentes não pagos ×
+  diária` (`computeDailyBase`).
+- **Mensal/semanal/quinzenal**: a base é o salário fixo **menos uma diária por
+  falta** (`salário − faltas × diária`, mínimo 0).
+
+Ao pagar, todos os registros do ciclo (presenças e faltas) são quitados
+(`settledByPaymentId`, mesmo padrão dos adiantamentos) e o comprovante detalha
+"dias × diária" (diarista) ou "faltas × diária" (demais).
+
+### Fechamento automático do pagamento
+
+`POST /api/funcionarios/[id]/pagamentos` é transacional no domínio:
+
+1. Recalcula o líquido no servidor.
+2. Cria o lançamento `pagamento` (`pago`, imutável) com o detalhamento completo.
+3. Quita os adiantamentos/dívidas descontados (`quitado`, vinculados ao pagamento via `settledByPaymentId`).
+4. Avança `nextPaymentDate` para o próximo ciclo conforme o tipo salarial.
+
+O corpo aceita `discountTransactionIds` opcional — permite escolher quais pendências descontar (a UI marca todas por padrão). Trava de segurança: descontos não podem exceder o salário (líquido < 0 → 400).
+
+### Comprovante em PDF (`lib/employeePdf.ts`)
+
+Client-side com `jsPDF` + `qrcode` (mesma filosofia do orçamento). Cabeçalho da empresa (logo, nome, CNPJ, endereço, telefone), dados do funcionário, detalhamento financeiro, rodapé com data, **assinaturas** (empresa + funcionário) e **QR Code funcional**: ele codifica a URL `/comprovante/[id]` — ao escanear no celular, abre a página (protegida por login, tenant-scoped via `GET /api/comprovantes/[id]`), regenera o PDF e dispara o download. Endereço/telefone vêm de campos opcionais novos em `User` (preenchidos no cadastro, expostos na sessão).
+
+### Rotas de API
+
+```
+GET    /api/funcionarios                       lista + pendências/líquido por funcionário
+POST   /api/funcionarios                       cadastro (+ dívida inicial opcional)
+GET    /api/funcionarios/[id]                   detalhe + extrato + financials
+PUT    /api/funcionarios/[id]                   edição
+DELETE /api/funcionarios/[id]                   soft delete (arquivar)
+POST   /api/funcionarios/[id]/adiantamentos     registra adiantamento (pendente)
+POST   /api/funcionarios/[id]/observacoes        registra observação
+POST   /api/funcionarios/[id]/pagamentos         efetua pagamento (fechamento)
+DELETE /api/funcionarios/[id]/transacoes/[txId]  soft delete (bloqueia pagamento)
+GET    /api/funcionarios/dashboard               indicadores + séries dos gráficos
+```
+
+### Frontend
+
+Nova aba **Funcionários** no `AppHeader`. Páginas em `app/(app)/funcionarios/`: listagem, `novo`, `[id]` (detalhe com modais de adiantamento/pagamento e histórico), `[id]/editar` e `dashboard`. Gráficos em CSS/SVG puro (`components/funcionario/Charts.tsx`), sem lib de charting — coerente com a filosofia de evitar complexidade prematura.
 
 ---
 

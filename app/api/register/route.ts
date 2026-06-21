@@ -5,7 +5,7 @@ import User from '@/models/User'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { companyName, cnpj, email, password, logoBase64 } = body
+    const { companyName, cnpj, email, password, logoBase64, address, phone } = body
 
     if (!companyName || !cnpj || !email || !password) {
       return NextResponse.json({ message: 'Campos obrigatórios faltando.' }, { status: 400 })
@@ -25,6 +25,8 @@ export async function POST(req: NextRequest) {
       email: email.toLowerCase().trim(),
       password,
       logoBase64: logoBase64 ?? null,
+      address: typeof address === 'string' ? address.trim() : '',
+      phone: typeof phone === 'string' ? phone.trim() : '',
     })
 
     return NextResponse.json(

@@ -4,6 +4,8 @@ import {
   formatCNPJ,
   formatCurrency,
   formatCurrencyOrDash,
+  validateCPF,
+  formatCPF,
 } from '@/lib/utils'
 
 /**
@@ -152,5 +154,51 @@ describe('formatCurrencyOrDash', () => {
 
   it('renders normal positive values as currency', () => {
     expect(formatCurrencyOrDash(100)).toContain('100,00')
+  })
+})
+/**
+ * validateCPF guards employee registration the same way validateCNPJ guards
+ * company registration. The CPF shows up on the payment receipt (comprovante),
+ * so a malformed number is a real-world legal/UX problem. The algorithm is
+ * stable, so these tests are "forever".
+ */
+describe('validateCPF', () => {
+  it('accepts a known-valid CPF without mask', () => {
+    // 529.982.247-25 is a widely used valid example (not a real person).
+    expect(validateCPF('52998224725')).toBe(true)
+  })
+
+  it('accepts the same CPF with mask', () => {
+    expect(validateCPF('529.982.247-25')).toBe(true)
+  })
+
+  it('rejects wrong length', () => {
+    expect(validateCPF('1234567890')).toBe(false)
+    expect(validateCPF('123456789012')).toBe(false)
+  })
+
+  it('rejects repeated-digit sequences that pass the DV math', () => {
+    expect(validateCPF('00000000000')).toBe(false)
+    expect(validateCPF('11111111111')).toBe(false)
+  })
+
+  it('rejects a CPF with a wrong check digit', () => {
+    expect(validateCPF('52998224724')).toBe(false)
+  })
+})
+
+describe('formatCPF', () => {
+  it('masks a full CPF', () => {
+    expect(formatCPF('52998224725')).toBe('529.982.247-25')
+  })
+
+  it('masks progressively as the user types', () => {
+    expect(formatCPF('529')).toBe('529')
+    expect(formatCPF('529982')).toBe('529.982')
+    expect(formatCPF('529982247')).toBe('529.982.247')
+  })
+
+  it('ignores non-digits and truncates beyond 11 digits', () => {
+    expect(formatCPF('529.982.247-25abc99')).toBe('529.982.247-25')
   })
 })

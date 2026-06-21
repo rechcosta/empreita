@@ -78,8 +78,10 @@ export const authOptions: NextAuthOptions = {
       session.user.cnpj = token.cnpj
       if (token.id) {
         await connectDB()
-        const user = await User.findById(token.id).select('logoBase64')
+        const user = await User.findById(token.id).select('logoBase64 address phone')
         session.user.logoBase64 = user?.logoBase64 ?? undefined
+        session.user.address = user?.address ?? undefined
+        session.user.phone = user?.phone ?? undefined
       }
       return session
     },

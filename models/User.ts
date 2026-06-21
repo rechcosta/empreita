@@ -5,6 +5,8 @@ export interface IUser extends Document {
   companyName: string
   cnpj: string
   logoBase64?: string
+  address?: string
+  phone?: string
   email: string
   password: string
   createdAt: Date
@@ -22,6 +24,9 @@ const UserSchema = new Schema<IUser>(
       trim: true,
     },
     logoBase64: { type: String, default: null },
+    // Opcionais — usados no cabeçalho do comprovante de pagamento.
+    address: { type: String, default: '', trim: true },
+    phone: { type: String, default: '', trim: true },
     email: {
       type: String,
       required: [true, 'Email obrigatório'],

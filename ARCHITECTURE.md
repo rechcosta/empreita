@@ -9,17 +9,20 @@ Para visão de produto e instruções operacionais, ver [`README.md`](./README.m
 ## Sumário
 
 1. [Visão geral](#visão-geral)
-2. [Stack e justificativa](#stack-e-justificativa)
-3. [Organização do código](#organização-do-código)
-4. [Modelo de dados](#modelo-de-dados)
-5. [Fluxo de autenticação](#fluxo-de-autenticação)
-6. [Camada de APIs](#camada-de-apis)
-7. [Numeração de orçamentos](#numeração-de-orçamentos)
-8. [Geração de PDF](#geração-de-pdf)
-9. [Testes](#testes)
-10. [Decisões de domínio](#decisões-de-domínio)
-11. [Segurança](#segurança)
-12. [Limites e trabalhos futuros](#limites-e-trabalhos-futuros)
+2. [Destaques de engenharia](#destaques-de-engenharia)
+3. [Stack e justificativa](#stack-e-justificativa)
+4. [Organização do código](#organização-do-código)
+5. [Modelo de dados](#modelo-de-dados)
+6. [Fluxo de autenticação](#fluxo-de-autenticação)
+7. [Camada de APIs](#camada-de-apis)
+8. [Numeração de orçamentos](#numeração-de-orçamentos)
+9. [Geração de PDF](#geração-de-pdf)
+10. [Recibos de prestação de serviços](#recibos-de-prestação-de-serviços)
+11. [Módulo de Funcionários](#módulo-de-funcionários)
+12. [Testes](#testes)
+13. [Decisões de domínio](#decisões-de-domínio)
+14. [Segurança](#segurança)
+15. [Limites e trabalhos futuros](#limites-e-trabalhos-futuros)
 
 ---
 
@@ -27,12 +30,31 @@ Para visão de produto e instruções operacionais, ver [`README.md`](./README.m
 
 Empreita é um SaaS monolítico em Next.js (App Router). Não há backend separado — frontend e API vivem no mesmo projeto. A escolha por monolito é deliberada: o domínio é pequeno, o tráfego esperado é baixo a médio, e a complexidade de um sistema distribuído não se justifica.
 
-Três tipos de usuário em potencial existem no modelo mental:
-- **Empresa prestadora** — usuário autenticado, dono da conta (modelado como `User`)
-- **Cliente final** — quem recebe o orçamento em PDF (**não** tem cadastro no sistema)
-- **Recipient do PDF** — o PDF é o artefato entregue para o cliente final fora do sistema
+O produto cresceu de um gerador de orçamentos para uma ferramenta de gestão com **três módulos** que compartilham conta, identidade visual e a mesma disciplina de engenharia:
 
-Apenas a empresa prestadora é modelada. O cliente final é um campo livre em cada orçamento, não uma entidade. Isso é intencional: gerenciar cadastro de cliente seria feature de CRM, fora do escopo.
+- **Orçamentos** — compõe materiais + mão de obra (três modalidades) e gera PDF profissional.
+- **Recibos** — digitaliza o "Recibo de Prestação de Serviços" a partir de um orçamento, editável e com numeração própria.
+- **Funcionários** — cadastro, presença, adiantamentos/dívidas, pagamento com fechamento de ciclo e comprovante com QR.
+
+O modelo mental de usuários:
+- **Empresa prestadora** — usuário autenticado, dono da conta (modelado como `User`).
+- **Funcionário** — pertence à empresa; tem cadastro, folha e histórico financeiro, mas não faz login.
+- **Cliente final** — quem recebe o orçamento/recibo em PDF; **não** tem cadastro (é campo livre no documento). Gerenciar cadastro de cliente seria CRM, fora do escopo.
+
+---
+
+## Destaques de engenharia
+
+Os pontos que este projeto usa para demonstrar decisão de engenharia, não só telas que funcionam. Cada um tem a discussão completa na seção indicada.
+
+- **Domínio como funções puras, recalculado no servidor.** Toda fórmula de dinheiro — total de mão de obra ([`lib/labor.ts`](#por-que-liblaborts-existe-como-módulo-separado)), folha ([`lib/payroll.ts`](#cálculos-financeiros-libpayrollts)) e derivação de recibo ([`lib/recibo.ts`](#derivação-a-partir-do-orçamento)) — vive isolada de banco/request, coberta por testes, e é **recomputada no servidor** a cada escrita. O cliente nunca é fonte de verdade para valores. → [Recálculo server-side](#recálculo-server-side)
+- **Numeração sequencial à prova de corrida.** Contador atômico (`$inc` + `upsert`) dá a cada empresa suas sequências `ORC-`/`REC-` sem lock de aplicação, com trade-off explícito (gap é preferível a colisão). → [Numeração](#numeração-de-orçamentos)
+- **Ledger financeiro auditável e imutável.** Pagamentos são lançamentos que nunca se apagam; adiantamentos/dívidas viram `quitado` vinculados ao pagamento, com responsável e data/hora. *Soft delete* em vez de remoção. → [Módulo de Funcionários](#regras-de-auditoria-impostas-no-código)
+- **Regras de folha não-triviais, isoladas e testadas.** Valor da diária por **dias úteis** (5/10/22), desconto de falta, acúmulo de diarista, e o detalhe sutil de "lista de descontos vazia enviada" ≠ "campo ausente" — um adiantamento não selecionado **permanece pendente** para o próximo ciclo. → [Cálculos financeiros](#cálculos-financeiros-libpayrollts)
+- **PDFs client-side com layout defensivo.** Geração vetorial com quebra de página automática, assinatura ancorada ao rodapé, QR de validação no comprovante e fidelidade ao formulário de papel no recibo — zero custo de servidor. → [Geração de PDF](#geração-de-pdf)
+- **Isolamento multi-conta real.** Toda query filtra por `userId` da sessão; não há endpoint administrativo nem vazamento por adivinhação de ID. → [Segurança](#segurança)
+- **Type-safety ponta a ponta.** TypeScript estrito, **união discriminada** para os tipos de mão de obra e augmentação dos tipos do NextAuth — uma mudança de contrato quebra no compilador, não em produção. → [Union discriminada](#union-discriminada-em-laboritem)
+- **Complexidade evitada de propósito.** Sem Redis, fila ou microsserviços; testes cobrem o que quebra em silêncio, não uma meta de cobertura. Cada dependência ausente é uma decisão. → [Stack e justificativa](#stack-e-justificativa)
 
 ---
 
@@ -101,7 +123,7 @@ A escolha não é fortemente opinada — co-localizar funcionaria igualmente bem
 
 ## Modelo de dados
 
-Três collections: `users`, `orcamentos` e `counters`. Relacionamento via `userId` (ObjectId ref).
+Sete collections, todas isoladas por conta via `userId` (ObjectId ref): `users`, `orcamentos`, `recibos`, `employees`, `employeetransactions`, `attendances` e `counters`. As três primeiras seções abaixo detalham o núcleo de orçamentos; recibos e folha têm seções próprias ([Recibos](#recibos-de-prestação-de-serviços), [Módulo de Funcionários](#módulo-de-funcionários)).
 
 ### User
 
